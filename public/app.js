@@ -9,8 +9,9 @@ var app = {};
 // Config
 app.config = {
   sessionToken: false,
+  sessionPhone: false,
 };
-
+app.checkListTimer = null;
 // AJAX Client (for RESTful API)
 app.client = {};
 
@@ -66,10 +67,11 @@ app.client.request = function (
   }
 
   // If there is a current session token set, add that as a header
-  if (app.config.sessionToken) {
-    xhr.setRequestHeader("token", app.config.sessionToken.id);
-  }
 
+  if (app.config.sessionToken) {
+    xhr.setRequestHeader("token", app.config.sessionToken);
+    xhr.setRequestHeader("phone", app.config.sessionPhone);
+  }
   // When the request comes back, handle the response
   xhr.onreadystatechange = function () {
     if (xhr.readyState == XMLHttpRequest.DONE) {
@@ -113,8 +115,8 @@ app.logUserOut = function (redirectUser) {
 
   // Get the current token id
   var tokenId =
-    typeof app.config.sessionToken.id == "string"
-      ? app.config.sessionToken.id
+    typeof app.config.sessionToken == "string"
+      ? app.config.sessionToken
       : false;
 
   // Send the current token to the tokens endpoint to delete it
@@ -129,8 +131,7 @@ app.logUserOut = function (redirectUser) {
     undefined,
     function (statusCode, responsePayload) {
       // Set the app.config token as false
-      app.setSessionToken(false);
-
+      app.setSessionToken(false, false);
       // Send the user to the logged out page
       if (redirectUser) {
         window.location = "/session/deleted";
@@ -150,7 +151,6 @@ app.bindForms = function () {
         var formId = this.id;
         var path = this.action;
         var method = this.method.toUpperCase();
-
         // Hide the error message (if it's currently shown due to a previous error)
         document.querySelector("#" + formId + " .formError").style.display =
           "none";
@@ -160,7 +160,6 @@ app.bindForms = function () {
           document.querySelector("#" + formId + " .formSuccess").style.display =
             "none";
         }
-
         // Turn the inputs into a payload
         var payload = {};
         var elements = this.elements;
@@ -212,7 +211,6 @@ app.bindForms = function () {
 
         // If the method is DELETE, the payload should be a queryStringObject instead
         var queryStringObject = method == "DELETE" ? payload : {};
-
         // Call the API
         app.client.request(
           undefined,
@@ -225,7 +223,7 @@ app.bindForms = function () {
             if (statusCode !== 200) {
               if (statusCode == 403) {
                 // log the user out
-                app.logUserOut();
+                // app.logUserOut();
               } else {
                 // Try to get the error from the api, or set a default error message
                 var error =
@@ -256,15 +254,13 @@ app.bindForms = function () {
 
 // Form response processor
 app.formResponseProcessor = function (formId, requestPayload, responsePayload) {
-  var functionToCall = false;
   // If account creation was successful, try to immediately log the user in
   if (formId == "accountCreate") {
     // Take the phone and password, and use it to log the user in
-    var newPayload = {
+    const newPayload = {
       phone: requestPayload.phone,
       password: requestPayload.password,
     };
-
     app.client.request(
       undefined,
       "api/tokens",
@@ -283,7 +279,7 @@ app.formResponseProcessor = function (formId, requestPayload, responsePayload) {
             "block";
         } else {
           // If successful, set the token and redirect the user
-          app.setSessionToken(newResponsePayload);
+          app.setSessionToken(newResponsePayload.token, newPayload.phone);
           window.location = "/checks/all";
         }
       }
@@ -291,7 +287,7 @@ app.formResponseProcessor = function (formId, requestPayload, responsePayload) {
   }
   // If login was successful, set the token in localstorage and redirect the user
   if (formId == "sessionCreate") {
-    app.setSessionToken(responsePayload);
+    app.setSessionToken(responsePayload.token, requestPayload.phone);
     window.location = "/checks/all";
   }
 
@@ -308,7 +304,8 @@ app.formResponseProcessor = function (formId, requestPayload, responsePayload) {
 
   // If the user just deleted their account, redirect them to the account-delete page
   if (formId == "accountEdit3") {
-    app.logUserOut(false);
+    app.logUserOut(true);
+    app.setSessionToken(false, false);
     window.location = "/account/deleted";
   }
 
@@ -326,17 +323,22 @@ app.formResponseProcessor = function (formId, requestPayload, responsePayload) {
 // Get the session token from localstorage and set it in the app.config object
 app.getSessionToken = function () {
   var tokenString = localStorage.getItem("token");
-  if (typeof tokenString == "string") {
+  var phone = localStorage.getItem("phone");
+  if (typeof tokenString == "string" && typeof phone === "string") {
     try {
       var token = JSON.parse(tokenString);
+      var phone = JSON.parse(phone);
       app.config.sessionToken = token;
-      if (typeof token == "object") {
+      app.config.sessionPhone = phone;
+      if (typeof token === "string") {
         app.setLoggedInClass(true);
+        // window.location = "/checks/all";
       } else {
         app.setLoggedInClass(false);
       }
     } catch (e) {
       app.config.sessionToken = false;
+      app.config.sessionPhone = false;
       app.setLoggedInClass(false);
     }
   }
@@ -353,11 +355,15 @@ app.setLoggedInClass = function (add) {
 };
 
 // Set the session token in the app.config object as well as localstorage
-app.setSessionToken = function (token) {
+app.setSessionToken = function (token, phone) {
   app.config.sessionToken = token;
+  app.config.sessionPhone = phone;
   var tokenString = JSON.stringify(token);
+  var phone = JSON.stringify(phone);
   localStorage.setItem("token", tokenString);
-  if (typeof token == "object") {
+  localStorage.setItem("phone", phone);
+
+  if (typeof token === "string") {
     app.setLoggedInClass(true);
   } else {
     app.setLoggedInClass(false);
@@ -365,56 +371,56 @@ app.setSessionToken = function (token) {
 };
 
 // Renew the token
-app.renewToken = function (callback) {
-  var currentToken =
-    typeof app.config.sessionToken == "object"
-      ? app.config.sessionToken
-      : false;
-  if (currentToken) {
-    // Update the token with a new expiration
-    var payload = {
-      id: currentToken.id,
-      extend: true,
-    };
-    app.client.request(
-      undefined,
-      "api/tokens",
-      "PUT",
-      undefined,
-      payload,
-      function (statusCode, responsePayload) {
-        // Display an error on the form if needed
-        if (statusCode == 200) {
-          // Get the new token details
-          var queryStringObject = { id: currentToken.id };
-          app.client.request(
-            undefined,
-            "api/tokens",
-            "GET",
-            queryStringObject,
-            undefined,
-            function (statusCode, responsePayload) {
-              // Display an error on the form if needed
-              if (statusCode == 200) {
-                app.setSessionToken(responsePayload);
-                callback(false);
-              } else {
-                app.setSessionToken(false);
-                callback(true);
-              }
-            }
-          );
-        } else {
-          app.setSessionToken(false);
-          callback(true);
-        }
-      }
-    );
-  } else {
-    app.setSessionToken(false);
-    callback(true);
-  }
-};
+// app.renewToken = function (callback) {
+//   var currentToken =
+//     typeof app.config.sessionToken == "object"
+//       ? app.config.sessionToken
+//       : false;
+//   if (currentToken) {
+//     // Update the token with a new expiration
+//     var payload = {
+//       id: currentToken.id,
+//       extend: true,
+//     };
+//     app.client.request(
+//       undefined,
+//       "api/tokens",
+//       "PUT",
+//       undefined,
+//       payload,
+//       function (statusCode, responsePayload) {
+//         // Display an error on the form if needed
+//         if (statusCode == 200) {
+//           // Get the new token details
+//           var queryStringObject = { id: currentToken.id };
+//           app.client.request(
+//             undefined,
+//             "api/tokens",
+//             "GET",
+//             queryStringObject,
+//             undefined,
+//             function (statusCode, responsePayload) {
+//               // Display an error on the form if needed
+//               if (statusCode == 200) {
+//                 app.setSessionToken(responsePayload);
+//                 callback(false);
+//               } else {
+//                 app.setSessionToken(false);
+//                 callback(true);
+//               }
+//             }
+//           );
+//         } else {
+//           app.setSessionToken(false);
+//           callback(true);
+//         }
+//       }
+//     );
+//   } else {
+//     app.setSessionToken(false);
+//     callback(true);
+//   }
+// };
 
 // Load data on the page
 app.loadDataOnPage = function () {
@@ -430,6 +436,10 @@ app.loadDataOnPage = function () {
   // Logic for dashboard page
   if (primaryClass == "checksList") {
     app.loadChecksListPage();
+    if (app.checkListTimer) {
+      clearInterval(app.checkListTimer);
+    }
+    app.checkListTimer = setInterval(() => app.loadChecksListPage(), 1000 * 5);
   }
 
   // Logic for check details page
@@ -441,20 +451,13 @@ app.loadDataOnPage = function () {
 // Load the account edit page specifically
 app.loadAccountEditPage = function () {
   // Get the phone number from the current token, or log the user out if none is there
-  var phone =
-    typeof app.config.sessionToken.phone == "string"
-      ? app.config.sessionToken.phone
-      : false;
-  if (phone) {
+  if (app.config.sessionPhone && app.config.sessionToken) {
     // Fetch the user data
-    var queryStringObject = {
-      phone: phone,
-    };
     app.client.request(
       undefined,
       "api/users",
       "GET",
-      queryStringObject,
+      undefined,
       undefined,
       function (statusCode, responsePayload) {
         if (statusCode == 200) {
@@ -488,92 +491,67 @@ app.loadAccountEditPage = function () {
 app.loadChecksListPage = function () {
   // Get the phone number from the current token, or log the user out if none is there
   var phone =
-    typeof app.config.sessionToken.phone == "string"
-      ? app.config.sessionToken.phone
+    typeof app.config.sessionPhone === "string"
+      ? app.config.sessionPhone
       : false;
-  if (phone) {
+  var token =
+    typeof app.config.sessionToken === "string"
+      ? app.config.sessionToken
+      : false;
+  if (phone && token) {
     // Fetch the user data
-    var queryStringObject = {
-      phone: phone,
-    };
     app.client.request(
       undefined,
-      "api/users",
+      "api/checks/all",
       "GET",
-      queryStringObject,
       undefined,
-      function (statusCode, responsePayload) {
-        if (statusCode == 200) {
-          // Determine how many checks the user has
-          var allChecks =
-            typeof responsePayload.checks == "object" &&
-            responsePayload.checks instanceof Array &&
-            responsePayload.checks.length > 0
-              ? responsePayload.checks
-              : [];
-          if (allChecks.length > 0) {
-            // Show each created check as a new row in the table
-            allChecks.forEach(function (checkId) {
-              // Get the data for the check
-              var newQueryStringObject = {
-                id: checkId,
-              };
-              app.client.request(
-                undefined,
-                "api/checks",
-                "GET",
-                newQueryStringObject,
-                undefined,
-                function (statusCode, responsePayload) {
-                  if (statusCode == 200) {
-                    var checkData = responsePayload;
-                    // Make the check data into a table row
-                    var table = document.getElementById("checksListTable");
-                    var tr = table.insertRow(-1);
-                    tr.classList.add("checkRow");
-                    var td0 = tr.insertCell(0);
-                    var td1 = tr.insertCell(1);
-                    var td2 = tr.insertCell(2);
-                    var td3 = tr.insertCell(3);
-                    var td4 = tr.insertCell(4);
-                    td0.innerHTML = responsePayload.method.toUpperCase();
-                    td1.innerHTML = responsePayload.protocol + "://";
-                    td2.innerHTML = responsePayload.url;
-                    var state =
-                      typeof responsePayload.state == "string"
-                        ? responsePayload.state
-                        : "unknown";
-                    td3.innerHTML = state;
-                    td4.innerHTML =
-                      '<a href="/checks/edit?id=' +
-                      responsePayload.id +
-                      '">View / Edit / Delete</a>';
-                  } else {
-                    console.log("Error trying to load check ID: ", checkId);
-                  }
-                }
-              );
-            });
-
-            if (allChecks.length < 5) {
-              // Show the createCheck CTA
-              document.getElementById("createCheckCTA").style.display = "block";
-            }
-          } else {
-            // Show 'you have no checks' message
-            document.getElementById("noChecksMessage").style.display =
-              "table-row";
-
+      undefined,
+      (statusCode, responsePayload) => {
+        if (statusCode === 200 && responsePayload.length > 0) {
+          const checks = responsePayload;
+          var table = document.getElementById("checksListTable");
+          var headers = `<tr>
+            <th>Method</th>
+            <th>Protocol</th>
+            <th>URL</th>
+            <th>State</th>
+            <th>Details</th>
+          </tr>`;
+          var tableRows = "";
+          checks.forEach((checkData) => {
+            tableRows =
+              tableRows +
+              `<tr>
+              <td>${checkData.method.toUpperCase()}</td>
+              <td>${checkData.protocol + "://"}</td>
+              <td>${checkData.url}</td>
+              <td>${
+                typeof checkData.state == "string" ? checkData.state : "unknown"
+              }</td>
+              <td><a href="/checks/edit?id=${
+                checkData._id
+              }">View / Edit / Delete</a></td>
+            </tr>`;
+          });
+          table.innerHTML = headers + tableRows;
+          if (checks.length < 5) {
             // Show the createCheck CTA
             document.getElementById("createCheckCTA").style.display = "block";
           }
+        } else if (statusCode === 200) {
+          // Show 'you have no checks' message
+          document.getElementById("noChecksMessage").style.display =
+            "table-row";
+
+          // Show the createCheck CTA
+          document.getElementById("createCheckCTA").style.display = "block";
         } else {
-          // If the request comes back as something other than 200, log the user our (on the assumption that the api is temporarily down or the users token is bad)
-          app.logUserOut();
+          console.log("error fetching check data");
         }
       }
     );
   } else {
+    // If the request comes back as something other than 200, log the user our (on the assumption that the api is temporarily down or the users token is bad)
     app.logUserOut();
   }
 };
@@ -602,12 +580,12 @@ app.loadChecksEditPage = function () {
           // Put the hidden id field into both forms
           var hiddenIdInputs = document.querySelectorAll("input.hiddenIdInput");
           for (var i = 0; i < hiddenIdInputs.length; i++) {
-            hiddenIdInputs[i].value = responsePayload.id;
+            hiddenIdInputs[i].value = responsePayload._id;
           }
-
           // Put the data into the top form as values where needed
+
           document.querySelector("#checksEdit1 .displayIdInput").value =
-            responsePayload.id;
+            responsePayload._id;
           document.querySelector("#checksEdit1 .displayStateInput").value =
             responsePayload.state;
           document.querySelector("#checksEdit1 .protocolInput").value =
@@ -642,15 +620,15 @@ app.loadChecksEditPage = function () {
 };
 
 // Loop to renew token often
-app.tokenRenewalLoop = function () {
-  setInterval(function () {
-    app.renewToken(function (err) {
-      if (!err) {
-        console.log("Token renewed successfully @ " + Date.now());
-      }
-    });
-  }, 1000 * 60);
-};
+// app.tokenRenewalLoop = function () {
+//   setInterval(function () {
+//     app.renewToken(function (err) {
+//       if (!err) {
+//         console.log("Token renewed successfully @ " + Date.now());
+//       }
+//     });
+//   }, 1000 * 60);
+// };
 
 // Init (bootstrapping)
 app.init = function () {
@@ -664,7 +642,7 @@ app.init = function () {
   app.getSessionToken();
 
   // Renew token
-  app.tokenRenewalLoop();
+  // app.tokenRenewalLoop();
 
   // Load data on page
   app.loadDataOnPage();
@@ -673,4 +651,17 @@ app.init = function () {
 // Call the init processes after the window loads
 window.onload = function () {
   app.init();
+  if (
+    window.location.pathname === "/" &&
+    app.config.sessionToken &&
+    app.config.sessionPhone
+  ) {
+    window.location = "/checks/all";
+  }
 };
+//Removing setInterval call on checkList
+// window.onunload = function () {
+//   if (app.checkListTimer) {
+//     clearInterval(app.checkListTimer);
+//   }
+// };

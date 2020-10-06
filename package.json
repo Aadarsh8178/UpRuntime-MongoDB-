@@ -1,0 +1,33 @@
+{
+  "name": "UpRuntime",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aadarsh8178/UpRuntime-fileStorage-.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Aadarsh8178/UpRuntime-fileStorage-/issues"
+  },
+  "homepage": "https://github.com/Aadarsh8178/UpRuntime-fileStorage-#readme",
+  "dependencies": {
+    "dotenv": "^8.2.0",
+    "mongoose": "^5.10.7",
+    "twilio": "^3.49.4"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.4"
+  }
+}
